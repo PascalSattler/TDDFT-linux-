@@ -34,42 +34,34 @@ class Hamiltonian:
     V_phi_list = []
     
     def __init__(self, n, n_elec, xrange, temp = 0, fix=True):
-        '''
-        variables for Hamiltonian
-        n : number of points to be evaluated
-        n_elec : number of electrons in the system
-        x_range : lenght of 1D system which the electrons occupy 
-        temp : temperature of the system
-        fix : set boundary conditions (stationary of periodic)
-        '''
         self.n = n
         self.n_elec = n_elec
-        assert hasattr(xrange, "__len__") #checks if xrange is an interval
-        assert len(xrange) == 2 
-        self.xmin = xrange[0] #left-most point
-        self.xmax = xrange[1] #right-most point
-        self.x_span = self.xmax - self.xmin #absolute value of the lenght of the interval
+        assert hasattr(xrange, "__len__")
+        assert len(xrange) == 2
+        self.xmin = xrange[0]
+        self.xmax = xrange[1]
+        self.x_span = self.xmax - self.xmin
         self.fix = fix
         
         if fix:
-            self.h = self.x_span/(n+1) #size of infinitesimal element
+            self.h = self.x_span/(n+1)
             self.x = np.linspace(self.xmin + self.h, self.xmax - self.h, self.n)
         else:
             self.h = self.x_span/n
             self.x = np.linspace(self.xmin, self.xmax, self.n, endpoint = False)
             
         if temp == 0:
-            if n_elec % 2 == 0: #check is divisible by 2 because of spin multiplicity (spin up/down)
-                self.f_occ = 2 * np.ones(n_elec // 2) #2 electrons can occupy 1 potential well
+            if n_elec % 2 == 0:
+                self.f_occ = 2 * np.ones(n_elec // 2)
                 #for i in range(6):
                 #    self.f_occ = np.append(self.f_occ, 1e-10)
             else:
                 #self.f_occ = 2 * np.ones(n_elec // 2)
                 #self.f_occ = np.append(self.f_occ, 1e-10)
-                self.f_occ = 2 * np.ones(n_elec // 2) #if n_elec is not even, last electron (spin up) has to occupy new potetial well
+                self.f_occ = 2 * np.ones(n_elec // 2)
                 self.f_occ = np.append(self.f_occ, 1)
         else:
-            raise NotImplementedError("not implemented yet")
+            raise NotImplementedError("noch nicht fertig für endliche Temp")
             
         self._create_kinetic()
         
@@ -104,9 +96,9 @@ class Hamiltonian:
                     func_string, Phi_t = Phi_t, params = params))
 
     def solve(self, num_eig=None):
-        self.V_phi = 0
+        self.V_phi = 0 
         #for V_phi in self.V_phi_list:
-        #    self.V_phi += V_phi.call(0)
+        #        self.V_phi += V_phi.call(0)
         if self.Psi is None:
             self.H = self.T + diags(self.V_ex)
         else:
@@ -155,7 +147,7 @@ class Hamiltonian:
         else:
             return self.h * conv(self.prob_density, self.kernel, mode = 'wrap')
     
-    def solve_sc(self, num_eig = None, virtual = False):
+    def solve_sc(self):
         if self.Psi is None:
             self.solve()
         N_it = root(self.iteration, self.prob_density, method = self.root_method,
