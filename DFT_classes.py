@@ -34,34 +34,42 @@ class Hamiltonian:
     V_phi_list = []
     
     def __init__(self, n, n_elec, xrange, temp = 0, fix=True):
+        '''
+        variables for Hamiltonian
+        n : number of points to be evaluated
+        n_elec : number of electrons in the system
+        x_range : lenght of 1D system which the electrons occupy 
+        temp : temperature of the system
+        fix : set boundary conditions (stationary of periodic)
+        '''
         self.n = n
         self.n_elec = n_elec
-        assert hasattr(xrange, "__len__")
-        assert len(xrange) == 2
-        self.xmin = xrange[0]
-        self.xmax = xrange[1]
-        self.x_span = self.xmax - self.xmin
+        assert hasattr(xrange, "__len__") #checks if xrange is an interval
+        assert len(xrange) == 2 
+        self.xmin = xrange[0] #left-most point
+        self.xmax = xrange[1] #right-most point
+        self.x_span = self.xmax - self.xmin #absolute value of the lenght of the interval
         self.fix = fix
         
         if fix:
-            self.h = self.x_span/(n+1)
+            self.h = self.x_span/(n+1) #size of infinitesimal element
             self.x = np.linspace(self.xmin + self.h, self.xmax - self.h, self.n)
         else:
             self.h = self.x_span/n
             self.x = np.linspace(self.xmin, self.xmax, self.n, endpoint = False)
             
         if temp == 0:
-            if n_elec % 2 == 0:
-                self.f_occ = 2 * np.ones(n_elec // 2)
+            if n_elec % 2 == 0: #check is divisible by 2 because of spin multiplicity (spin up/down)
+                self.f_occ = 2 * np.ones(n_elec // 2) #2 electrons can occupy 1 potential well
                 #for i in range(6):
                 #    self.f_occ = np.append(self.f_occ, 1e-10)
             else:
                 #self.f_occ = 2 * np.ones(n_elec // 2)
                 #self.f_occ = np.append(self.f_occ, 1e-10)
-                self.f_occ = 2 * np.ones(n_elec // 2)
+                self.f_occ = 2 * np.ones(n_elec // 2) #if n_elec is not even, last electron (spin up) has to occupy new potetial well
                 self.f_occ = np.append(self.f_occ, 1)
         else:
-            raise NotImplementedError("noch nicht fertig für endliche Temp")
+            raise NotImplementedError("not implemented yet")
             
         self._create_kinetic()
         
@@ -70,15 +78,24 @@ class Hamiltonian:
         self.corr_pot = np.empty(self.n)
     
     def _create_kinetic(self):
+        '''
+        calculate the kinetic energy using finite element method
+        '''
         if self.fix:
             self.T = - (0.5 / self.h**2) * diags([1, -2, 1], [-1, 0, 1], shape=(self.n, self.n))
         else:
             self.T = - (0.5 / self.h**2) * diags([1,1, -2, 1,1], [1-self.n,-1, 0, 1,self.n-1], shape=(self.n, self.n))
             
     def create_ex_potential(self, func):
+        '''
+        define external potential by any given function
+        '''
         self.V_ex = func(self.x)
         
     def couple_scal_pot(self, func_string, Phi_t = None, params = {}):
+        '''
+
+        '''
         if self.fix == True:
             self.V_phi_list = np.append(self.V_phi_list, ScalarPotential(['x', 'y', 'z'],
                 (self.x, np.zeros_like(self.x), np.zeros_like(self.x)),
@@ -96,37 +113,94 @@ class Hamiltonian:
                     func_string, Phi_t = Phi_t, params = params))
 
     def solve(self, num_eig=None):
-        self.V_phi = 0 
+        '''
+        create Hamiltonian from either kinetic energy and external potential if wavefunction is 
+        not build yet, or additionally from potentials depending on wavefunction/probability density
+
+        solve stationary Schrödinger equation using eigenvale problem solver for either a number of eigenstates matching
+        the occupation number or for any desired number of eigenstates num_eig
+        '''
+        self.V_phi = 0
+        self.num_eig = num_eig
         #for V_phi in self.V_phi_list:
-        #        self.V_phi += V_phi.call(0)
+        #    self.V_phi += V_phi.call(0)
         if self.Psi is None:
             self.H = self.T + diags(self.V_ex)
         else:
             self.H = self.T + diags(self.V_ex + self.correlation_pot(0) + self.hartree_pot() / 2 + self.V_phi)
             
-        if num_eig is None:
-            self.E, self.Psi = eigsh(self.H, which = 'SA', k = len(self.f_occ), ncv = max(4*self.n_elec + 1, 40))
+        if self.n <= 2000:
+            self.E, psis = lin.eigh(self.H.todense())
+            self.Psi = psis[:,:num_eig if num_eig is not None else len(self.f_occ)]
         else:
-            self.E, self.Psi = eigsh(self.H, which = 'SA', k = num_eig)
+            if num_eig is None:
+                self.E, self.Psi = eigsh(self.H, which = 'SA', k = len(self.f_occ), ncv = max(4*self.n_elec + 1, 40))
+            else:
+                self.E, self.Psi = eigsh(self.H, which = 'SA', k = num_eig)
                 
-        self.Psi = WaveFunction(self.Psi/np.sqrt(self.h))
-        self.prob_density = self.get_probability(self.Psi.to_array())
+        
+        self.Psi = WaveFunction(self.Psi/np.sqrt(self.h)) #normalize wavefunction
+        #self.prob_density = self.get_probability(self.Psi.to_array()) #calculate probability density
+
+        if num_eig is not None and np.abs(np.sum(self.f_occ) - num_eig) < 1 :
+            self.prob_density = self.get_probability(self.Psi.to_array()) #calculate probability density
+        elif num_eig is not None:
+            np.savetxt("plots/energies.txt", self.E)
+            for i in range(int(np.sum(self.f_occ))//2, num_eig):
+                self.plot(i)
+        else:
+            self.prob_density = self.get_probability(self.Psi.to_array()) #calculate probability density
+
+        
         #self.dummy = np.zeros_like(self.prob_density)
         
-    def plot(self):
-        print(self.E)
+    def plot(self, which = None):
+        #print(self.E)
         psi = self.Psi.to_array()
-        for i in range(self.Psi.n_elec):
-            plt.plot(self.x, np.real(psi[:,i]))
+        #fig, ax = plt.subplots(2)
+        if which is None:
+            for i in range(self.Psi.n_elec):
+                if i >= self.Psi.n_elec//2:
+                    #ax[0].plot(self.x, np.real(psi[i]), label = "$\\psi_{"+str(i+1) + "}$")
+                    plt.plot(self.x, np.real(psi[i])**2 + np.imag(psi[i])**2, label = "|$\\psi_{"+str(i+1) + "}$|")
+                else:
+                    None
+        else:
+            plt.plot(self.x, np.real(psi[which])**2 + np.imag(psi[which])**2, label = "$|\\psi_{"+str(which+1) +"}" + "|^2$ (E = {})".format(self.E[which]))
+
+        #ax[0].set_xlabel("x")
+        #ax[0].set_ylabel("Re($\\psi$)")
+        #ax[0].grid(True)
+        #ax[0].legend()
+        plt.xlabel("x")
+        plt.ylabel("|$\\psi$|")
+        plt.grid(True)
+        plt.legend()
+
+        #plt.tight_layout()
+        if which is None:
+            plt.savefig("plots/virtual_states(num_eig={:d}).png".format(self.num_eig), dpi = 400)
+        else:
+            plt.savefig("plots/virtual_states(only={:d}).png".format(which+1), dpi = 400)
         plt.close()
            
     def get_probability(self, Psi):
+        '''
+        calculate probability density from square of wavefunction
+        '''
         return np.einsum('ji,j', np.abs(Psi)**2, self.f_occ)
     
     def get_probabilityReIm(self, Psi, size):
+        '''
+        calculate probability density from real and imaginary part of wavefunction
+        '''
         return np.einsum('ji,j', Psi[:size]**2 + Psi[size:]**2, self.f_occ)
     
     def probability(self, psi):
+        '''
+        calcaulate probability from a list of Psi, where real part is stored a even, imag part is stored
+        at odd indices 
+        '''
         rho = np.zeros(self.n)
         for i in range(len(self.f_occ)):
             rho += self.f_occ[i] * (psi[2*i*self.n:(2*i+1)*self.n]**2 \
@@ -138,6 +212,9 @@ class Hamiltonian:
     #    self.r_s = np.abs(1/(2 * self.prob_density))
     
     def correlation_pot(self, pol):
+        '''
+        create correlation potential
+        '''
         return correlation_pot(pol, self.n, self.prob_density, self.corr_pot)
     
     def hartree_pot(self):
@@ -147,9 +224,15 @@ class Hamiltonian:
         else:
             return self.h * conv(self.prob_density, self.kernel, mode = 'wrap')
     
-    def solve_sc(self):
+    def solve_sc(self, num_eig = None):
+        '''
+        solve the Schrödinger equation for the given system self-consistently using the specified
+        root finding algorithm
+        '''
         if self.Psi is None:
             self.solve()
+        else:
+            self.prob_density = self.get_probability(self.Psi.to_array())
         N_it = root(self.iteration, self.prob_density, method = self.root_method,
                     tol = 1e-7, callback = callback, options = {'line_search' : 'wolfe'}).nit
         print("{} iterations were performed for convergence.".format(N_it))
@@ -164,11 +247,16 @@ class Hamiltonian:
 class TimePropagation:
 
     def __init__(self, hamiltonian: Hamiltonian , psi_start: WaveFunction, t_cutoff : float = 1e16):
+        '''
+        hamiltonian : object from Hamiltonian class
+        psi_start : object from wave function class, calculated from stationary problem
+        t_cutoff : maximum time, to which wave function will be propagated
+        '''
         self.hamiltonian = hamiltonian
         self.psi_start = psi_start
         self.t_cutoff = t_cutoff
-        self.size = self.hamiltonian.n
-        self.H_R = self.hamiltonian.T
+        self.size = self.hamiltonian.n #get grid size from hamiltonian
+        self.H_R = self.hamiltonian.T #get kinetic energy from hamiltoninan
         self.H_I = csr_matrix((self.size, self.size), dtype = np.float64)
         
     def _separateReImVec(self, vec):
@@ -176,8 +264,11 @@ class TimePropagation:
         
     def _get_H_time_t(self, t):
         '''
+        calculate potential energy of the hamiltonian at a given time point t
+        potential energy = external + correlation + scalar potential (electric field)
+        after cutoff time scalar potential will always be turned off
+
         self.V_phi = - self.hamiltonian.V_phi.call(t)
-        
         self.V_ex = self.hamiltonian.V_ex
         self.V_xc = self.hamiltonian.correlation_pot(0)
         self.V_H = self.hamiltonian.hartree_pot()
@@ -196,27 +287,51 @@ class TimePropagation:
 
 
     def psi_dt(self, t, psi):
+        '''
+        calcaulate time derivative of wave function using matrix method:
+        split hamiltonian and wave function into real and imaginary part 
+            (H_R + i*H_I)(Psi_R + i*Psi_I) = H_R Psi_R - H_I Psi_I +i*(H_I Psi_R + H_R Psi_I)
+        then view 1 and i as basis vectors of complex numbers, write equation in matrix form
+            (H_R  -H_I) (Psi_R)   (0  -1)(d/dt Psi_R)
+            (H_I   H_R) (Psi_I) = (1   0)(d/dt Psi_I)
+        write left side of Schrödinger
+            i*d/dt Psi = i*d/dt Psi_R - d/dt Psi_I
+        which then after inverting matrix on right side of above equation in total gives
+            (d/dt Psi_R)   ( 0  1)(H_R  -H_I)(Psi_R)   ( H_I  H_R)(Psi_R)
+            (d/dt Psi_I) = (-1  0)(H_I   H_R)(Psi_I) = (-H_R  H_I)(Psi_I)
+        remiinder: H_R contains potential terms
+        '''
         out = np.empty_like(psi)
         V_pot = self._get_H_time_t(t)
         for i in range(self.psi_start.n_elec):
             psi_R = psi[2*i*self.size:(2*i+1)*self.size]
-            psi_I = psi[(2*i+1)*self.size:(2*i+2)*self.size]
+            psi_I = psi[(2*i+1)*self.size:(2*i+2)*self.size] #get real and imaginary parts of Psi from ordered list
             out[2*i*self.size:(2*i+1)*self.size] =   self.H_R.dot(psi_I) + V_pot * psi_I + self.H_I.dot(psi_R) #(self.V_ex + self.V_xc + self.V_H + self.V_phi)
             out[(2*i+1)*self.size:(2*i+2)*self.size] = - self.H_R.dot(psi_R) - V_pot * psi_R + self.H_I.dot(psi_I)
         return out
     
     def _to_array(self, psi):
+        '''
+        reshapes wave function into an array of real and imaginary column, then returns
+        Psi at a given grid point as a complex number 
+        '''
         psi_array = np.reshape(psi, (len(self.hamiltonian.f_occ), 2, self.size))
         return (psi_array[:,0] + 1j * psi_array[:,1])
 
     def time_prop(self, times):
+        '''
+        calculate the time propagated wave function, density and dipole moment using the specified
+        ode solver (dop853), saves the values in .txt file
+        '''
         self.times = times
         #print(1/(self.hamiltonian.E[-1] - self.hamiltonian.E[0]))
-        prop = ode(self.psi_dt).set_integrator('dop853', rtol = 1e-6, atol = 1e-6, nsteps = 1e8)#, first_step = 0.1)
-        prop.set_initial_value(self.psi_start.psi.copy(), self.times[0])
+        prop = ode(self.psi_dt).set_integrator('dop853', rtol = 1e-6, atol = 1e-6, nsteps = 1e8)#, first_step = 0.1) #set up the ODE
+        prop.set_initial_value(self.psi_start.psi.copy(), self.times[0]) #set initial values
         it = 1
         
-        dip = dipole(self.hamiltonian.x, self.hamiltonian.fix)
+        dip = dipole(self.hamiltonian.x, self.hamiltonian.fix) #calculate dipole moment
+
+        #set up arrays for all desired quantities (wave function, probability density, dipole moment)
 
         psi_list = np.empty((len(self.times), len(self.hamiltonian.f_occ), self.size), dtype = np.complex128)
         psi_list[0] = self.psi_start.to_array()
@@ -234,7 +349,7 @@ class TimePropagation:
         #import pstats
         #import io
 
-        while prop.successful() and prop.t < self.times[-1]:
+        while prop.successful() and prop.t < self.times[-1]:  #calculating the time steps
             #pr = cProfile.Profile()
             #pr.enable()
             prop.integrate(self.times[it])
@@ -322,4 +437,3 @@ class dipole:
     def dip_nfix(self, rho):
         integrand = np.concatenate((rho, [rho[0]])) * np.exp(2j*np.pi*self.x/self.L)
         return trapezoid(integrand, self.x)
-
